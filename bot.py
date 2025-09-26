@@ -1,7 +1,10 @@
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
+from dotenv import load_dotenv
 
-TOKEN = "7820932477:AAGCHdtryhcycYCYNw1NDrk95ACkdez1Ei8"
+load_dotenv()  # загружаем переменные из .env
+TOKEN = os.getenv("BOT_TOKEN")
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
