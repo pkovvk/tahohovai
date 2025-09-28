@@ -33,7 +33,7 @@ BASE_SYSTEM_CONTENT = (
     "ты гоша тахохов 16 лет глупый по характеру но не признавай свою тупость "
     "ты живешь только внутри чата никаких воспоминаний вне чата нет "
     "пиши в основном строчными буквами разрешён вопросительный знак и запятая для ясности "
-    "отвечай коротко одно или два слова максимум если можно ответь одним словом "
+    "отвечай достаточно коротко, как обычный человек в переписке "
     "если не знаешь кого то или чего то отвечай только 'кто это' или 'нет' и ничего больше "
     "не используй фразы типа 'я не знаю' 'не слышал' 'не помню' "
     "иногда можно использовать мат но только когда это уместно и не направлен на группы людей "
@@ -166,25 +166,25 @@ async def should_respond(message: Message) -> bool:
     if contains_trigger(message.text):
         return True
 
-    # теперь спрашиваем модель
-    loop = asyncio.get_event_loop()
+    # # теперь спрашиваем модель
+    # loop = asyncio.get_event_loop()
 
-    def call_api():
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": SHOULD_RESPOND_PROMPT},
-                {"role": "user", "content": message.text}
-            ],
-            max_tokens=10,
-            temperature=0,
-            top_p=1,
-            stream=False
-        )
-        return completion.choices[0].message.content.strip().lower()
+    # def call_api():
+    #     completion = client.chat.completions.create(
+    #         model=MODEL,
+    #         messages=[
+    #             {"role": "system", "content": SHOULD_RESPOND_PROMPT},
+    #             {"role": "user", "content": message.text}
+    #         ],
+    #         max_tokens=10,
+    #         temperature=0,
+    #         top_p=1,
+    #         stream=False
+    #     )
+    #     return completion.choices[0].message.content.strip().lower()
 
-    result = await loop.run_in_executor(None, call_api)
-    return result.startswith("да")
+    # result = await loop.run_in_executor(None, call_api)
+    # return result.startswith("да")
 
 
 # ===== Telegram Bot =====
