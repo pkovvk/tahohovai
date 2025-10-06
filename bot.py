@@ -53,7 +53,6 @@ async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
             def sync_call():
                 return hf_client.chat.completions.create(
                     model=MODEL_NAME,
-                    revision=MODEL_REV,
                     messages=[system_message, {"role": "user", "content": user_content}],
                     max_tokens=256,
                     temperature=0.2
