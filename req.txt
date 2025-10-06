@@ -1,5 +1,4 @@
 aiogram==2.25.1
 python-dotenv==1.0.0
 huggingface-hub==0.35.3
-latex2png==0.1.7
-Pillow==10.0.1
+sympy==1.12

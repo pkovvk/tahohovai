@@ -4,7 +4,8 @@ from aiogram import Bot, Dispatcher, executor, types
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 import asyncio
-from latex2png import latex2png
+from sympy import preview
+import re
 
 # -------------------- Настройки --------------------
 logging.basicConfig(level=logging.INFO)
@@ -27,15 +28,10 @@ hf_client = InferenceClient(provider=HF_PROVIDER, api_key=HF_TOKEN)
 # -------------------- Lock для очереди --------------------
 hf_lock = asyncio.Lock()
 
-# -------------------- Функция для конвертации LaTeX в PNG --------------------
-def latex_to_image(latex_code, filename="formula.png"):
-    latex2png(
-        latex_code,
-        filename,
-        dpi=200,
-        fontsize=20,
-        transparent=True
-    )
+# -------------------- Функция для рендера LaTeX в PNG --------------------
+def latex_to_png(latex_code: str, filename="formula.png"):
+    """Сохраняет LaTeX формулу в PNG через SymPy.preview"""
+    preview(latex_code, viewer="file", filename=filename, euler=False, output="png", dvioptions=['-D', '200'])
     return filename
 
 # -------------------- Функция запроса к модели --------------------
@@ -86,10 +82,14 @@ async def handle_text(message: types.Message):
     await message.reply("Обрабатываю...")
     answer = await ask_model(message.text)
 
-    # Если есть LaTeX (пример: проверка на символы ^, \ или $)
-    if "\\" in answer or "^" in answer or "$" in answer:
-        filename = latex_to_image(answer)
-        await bot.send_photo(chat_id=message.chat.id, photo=open(filename, "rb"))
+    # Ищем LaTeX формулы: \( ... \) или $ ... $
+    latex_list = re.findall(r'\\\((.*?)\\\)|\$(.*?)\$', answer)
+    if latex_list:
+        # Берем все формулы и рендерим в PNG
+        for item in latex_list:
+            formula = item[0] if item[0] else item[1]
+            filename = latex_to_png(formula)
+            await bot.send_photo(chat_id=message.chat.id, photo=open(filename, "rb"))
     else:
         await message.reply(answer or "Модель не вернула ответ.")
 
@@ -104,9 +104,12 @@ async def handle_photo(message: types.Message):
     caption = message.caption or "Опиши изображение."
     answer = await ask_model(caption, image_url=file_url)
 
-    if "\\" in answer or "^" in answer or "$" in answer:
-        filename = latex_to_image(answer)
-        await bot.send_photo(chat_id=message.chat.id, photo=open(filename, "rb"))
+    latex_list = re.findall(r'\\\((.*?)\\\)|\$(.*?)\$', answer)
+    if latex_list:
+        for item in latex_list:
+            formula = item[0] if item[0] else item[1]
+            filename = latex_to_png(formula)
+            await bot.send_photo(chat_id=message.chat.id, photo=open(filename, "rb"))
     else:
         await message.reply(answer or "Модель не вернула ответ.")
 
