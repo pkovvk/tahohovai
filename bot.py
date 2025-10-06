@@ -156,7 +156,7 @@ async def handle_photo(message: types.Message):
     photo = message.photo[-1]
     file_path = f"/tmp/tg_img_{message.message_id}.jpg"
     try:
-        await photo.download(file_path)
+        await photo.download(destination_file=file_path)
         text = extract_text_from_image(file_path)
         if not text:
             await message.reply("Не удалось распознать текст на изображении.")
