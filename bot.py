@@ -1,9 +1,8 @@
 import os
-import asyncio
 import logging
 from aiogram import Bot, Dispatcher, executor, types
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from huggingface_hub import InferenceClient
 
 # -------------------- Настройки и логирование --------------------
 logging.basicConfig(level=logging.INFO)
@@ -18,18 +17,18 @@ if not BOT_TOKEN:
 if not HF_TOKEN:
     raise RuntimeError("Переменная окружения HF_TOKEN не установлена")
 
-# Telegram и Hugging Face (через OpenAI-совместимый API)
+# Telegram и Hugging Face
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-hf_client = AsyncOpenAI(
-    base_url="https://router.huggingface.co/v1",
-    api_key=HF_TOKEN
+hf_client = InferenceClient(
+    provider="novita",
+    api_key=HF_TOKEN,
 )
 
 # -------------------- Функция запроса к модели --------------------
 async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
-    """Отправка текста и (опционально) изображения в Qwen3-VL."""
+    """Отправка текста и (опционально) изображения в Qwen3-VL через HuggingFace Hub."""
     content = []
     if prompt_text:
         content.append({"type": "text", "text": prompt_text})
@@ -40,13 +39,13 @@ async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
         })
 
     try:
-        completion = await hf_client.chat.completions.create(
+        completion = hf_client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "user", "content": content}],
             max_tokens=256,
             temperature=0.2
         )
-        return completion.choices[0].message.content.strip()
+        return completion.choices[0].message
     except Exception as e:
         logging.exception("Ошибка при запросе к модели: %s", e)
         return f"Ошибка при запросе к модели: {e}"
