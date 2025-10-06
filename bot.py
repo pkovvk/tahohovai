@@ -20,12 +20,11 @@ def extract_text_from_image(file_path):
     return text
 
 async def ask_model(prompt, image_path=None):
-    # Если есть изображение — модель может принимать и image + текст
-    inputs = {"inputs": prompt}
+    kwargs = {}
     if image_path:
         with open(image_path, "rb") as f:
-            inputs["image"] = f.read()
-    response = hf_client.text_generation(model=MODEL, **inputs)
+            kwargs["image"] = f.read()
+    response = hf_client.text_generation(model=MODEL, inputs=prompt, **kwargs)
     return response[0]['generated_text']
 
 @dp.message_handler(content_types=types.ContentType.TEXT)
