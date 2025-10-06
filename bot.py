@@ -54,61 +54,83 @@ def extract_text_from_image(file_path: str) -> str:
 
 
 async def ask_model(prompt_text: str) -> str:
-    """
-    Отправляем prompt к HF Inference (text_generation).
-    Убираем передачу 'revision' (AsyncInferenceClient не принимает этот параметр).
-    Добавляем сокращение входа по длине и ограничения на генерацию.
+    """Используем chat completion (conversational) для моделей, которые поддерживают conversational task.
+
+    Меняем подход: вместо text_generation вызываем chat.completions.create у AsyncInferenceClient.
     """
     if not prompt_text:
         return ""
 
-    # Короткая системная инструкция — чтобы уменьшить длину результата
+    # Система — коротко, чтобы модель отвечала без воды
     system_instr = (
-        "Ты — помощник для решения школьных задач. "
-        "Отвечай как можно короче и по делу — только финальный ответ без лишней воды. "
-        "Если нужен шаг — максимум 2 коротких шага. Ответ на том же языке, что и вопрос.\n\n"
+        "Ты — помощник для решения школьных задач."
+        "Отвечай как можно короче и по делу — только финальный ответ без лишней воды."
     )
 
-    full_prompt = system_instr + "Задача:\n" + prompt_text
+    messages = [
+        {"role": "system", "content": system_instr},
+        {"role": "user", "content": prompt_text},
+    ]
 
-    # Простое обрезание по символам — лёгкая защита от очень длинных входов.
-    # (Можно заменить на подсчёт токенов с transformers/tokenizer для точности.)
-    MAX_PROMPT_CHARS = 3500
-    if len(full_prompt) > MAX_PROMPT_CHARS:
-        # оставим конец (в нём обычно вопрос/формулы)
-        full_prompt = full_prompt[-MAX_PROMPT_CHARS:]
-
-    # Подготовка аргументов для text_generation (без 'revision')
     call_kwargs = {
         "model": REPO_ID,
-        "max_new_tokens": 128,   # уменьшили с 512 до 128 — экономия токенов
-        "temperature": 0.0,      # детерминированность, меньше "воды"
+        "messages": messages,
+        "max_tokens": 128,
+        "temperature": 0.0,
     }
 
+    # note: AsyncInferenceClient.chat.completions.create is awaited
     try:
-        result = await hf_client.text_generation(full_prompt, **call_kwargs)
+        result = await hf_client.chat.completions.create(**call_kwargs)
     except Exception as e:
-        # логирование и проброс ошибки наверх
         logging.exception("Ошибка при обращении к HuggingFace Inference: %s", e)
         raise
 
-    # Приводим результат к строке (возможные форматы обработки)
-    if isinstance(result, str):
-        return result.strip()
+    # Попробуем корректно извлечь текст ответа из разных форматов
+    try:
+        # result.choices is usual
+        choices = getattr(result, "choices", None) or (result.get("choices") if isinstance(result, dict) else None)
+        if choices:
+            first = choices[0]
+            # try object attribute
+            msg = getattr(first, "message", None) or (first.get("message") if isinstance(first, dict) else None)
+            # if message is a dict with 'content'
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str):
+                    return content.strip()
+                if isinstance(content, list):
+                    # list of {'type':'text','text':'...'} or strings
+                    parts = []
+                    for item in content:
+                        if isinstance(item, dict) and "text" in item:
+                            parts.append(item["text"])
+                        elif isinstance(item, str):
+                            parts.append(item)
+                    return "".join(parts).strip()
+            # sometimes choice.message is a simple string under 'content' or 'text'
+            if isinstance(first, dict):
+                # check several possible keys
+                for key in ("text", "content", "message"):
+                    val = first.get(key)
+                    if isinstance(val, str):
+                        return val.strip()
+            # try attribute .message.content
+            if hasattr(first, "message"):
+                m = first.message
+                if isinstance(m, str):
+                    return m.strip()
+                if isinstance(m, dict):
+                    c = m.get("content")
+                    if isinstance(c, str):
+                        return c.strip()
+            # fallback to string of first
+            return str(first).strip()
+    except Exception:
+        logging.exception("Не удалось распарсить структуру ответа, возвращаю сырые данные")
+        return str(result).strip()
 
-    if isinstance(result, list) and result:
-        first = result[0]
-        if isinstance(first, dict) and "generated_text" in first:
-            return first["generated_text"].strip()
-        return str(first).strip()
-
-    if isinstance(result, dict):
-        if "generated_text" in result:
-            return result["generated_text"].strip()
-        for k in ("text", "data"):
-            if k in result:
-                return str(result[k]).strip()
-
+    # ultimate fallback
     return str(result).strip()
 
 
@@ -139,7 +161,6 @@ async def handle_photo(message: types.Message):
         if not text:
             await message.reply("Не удалось распознать текст на изображении.")
             return
-        # короткая информационная вставка — можно убрать
         logging.info("OCR text: %s", text[:200])
         try:
             answer = await ask_model(text)
@@ -160,5 +181,4 @@ async def handle_photo(message: types.Message):
 
 # -------------------- Запуск --------------------
 if __name__ == "__main__":
-    # Можно выставить proxy/timeout/другие параметры при необходимости
     executor.start_polling(dp, skip_updates=True)
