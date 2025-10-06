@@ -3,6 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher, executor, types
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
+import asyncio
 
 # -------------------- Настройки и логирование --------------------
 logging.basicConfig(level=logging.INFO)
@@ -10,7 +11,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
-MODEL = os.getenv("MODEL", "Qwen/Qwen3-VL-235B-A22B-Instruct:novita")
+MODEL = os.getenv("MODEL", "Qwen/Qwen3-VL-235B-Instruct:novita")
 
 if not BOT_TOKEN:
     raise RuntimeError("Переменная окружения BOT_TOKEN не установлена")
@@ -28,24 +29,43 @@ hf_client = InferenceClient(
 
 # -------------------- Функция запроса к модели --------------------
 async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
-    """Отправка текста и (опционально) изображения в Qwen3-VL через HuggingFace Hub."""
-    content = []
+    """Отправка текста и (опционально) изображения в Qwen3-VL через HuggingFace Hub, ответ на русском и кратко."""
+    system_message = {
+        "role": "system",
+        "content": [
+            {"type": "text", "text": "Ты говоришь только на русском языке и отвечаешь коротко и по делу."}
+        ]
+    }
+
+    user_content = []
     if prompt_text:
-        content.append({"type": "text", "text": prompt_text})
+        user_content.append({"type": "text", "text": prompt_text})
     if image_url:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": image_url}
-        })
+        user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
     try:
-        completion = hf_client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": content}],
-            max_tokens=256,
-            temperature=0.2
-        )
-        return completion.choices[0].message
+        # HF Hub работает синхронно, оборачиваем в поток
+        def sync_call():
+            return hf_client.chat.completions.create(
+                model=MODEL,
+                messages=[system_message, {"role": "user", "content": user_content}],
+                max_tokens=256,
+                temperature=0.2
+            )
+
+        completion = await asyncio.to_thread(sync_call)
+
+        # Извлекаем текст
+        text = completion.choices[0].message
+        if isinstance(text, str):
+            return text.strip()
+        elif hasattr(text, "content"):
+            content = text.content
+            if isinstance(content, list):
+                return " ".join(c["text"] for c in content if c["type"] == "text").strip()
+            return str(content)
+        return str(text)
+
     except Exception as e:
         logging.exception("Ошибка при запросе к модели: %s", e)
         return f"Ошибка при запросе к модели: {e}"
@@ -64,7 +84,6 @@ async def handle_photo(message: types.Message):
     file = await bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
 
-    # Передаем в модель URL фото и текст, если он есть
     caption = message.caption or "Опиши изображение."
     answer = await ask_model(caption, image_url=file_url)
     await message.reply(answer or "Модель не вернула ответ.")
