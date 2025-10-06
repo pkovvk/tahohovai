@@ -54,42 +54,48 @@ def extract_text_from_image(file_path: str) -> str:
 
 
 async def ask_model(prompt_text: str) -> str:
-    """Отправляем prompt к HF Inference (text_generation). Возвращаем срезанный ответ.
-
-    Замечание: если модель поддерживает multimodal inference через Inference API, можно допилить
-    передачу изображения (но API и модель должны это поддерживать). Сейчас используем OCR->text.
+    """
+    Отправляем prompt к HF Inference (text_generation).
+    Убираем передачу 'revision' (AsyncInferenceClient не принимает этот параметр).
+    Добавляем сокращение входа по длине и ограничения на генерацию.
     """
     if not prompt_text:
         return ""
 
-    # Добавляем инструкции, чтобы модель отвечала коротко и по делу
+    # Короткая системная инструкция — чтобы уменьшить длину результата
     system_instr = (
-        "Ты — помощник для решения школьных задач.\n"
-        "Отвечай как можно короче и по делу. Никакой лишней воды.\n"
-        "Если нужен только ответ — выдавай только ответ. Если требуется шаги — выдавай минимально необходимые шаги.\n"
-        "Ответ должен быть на том же языке, что и вопрос."
+        "Ты — помощник для решения школьных задач. "
+        "Отвечай как можно короче и по делу — только финальный ответ без лишней воды. "
+        "Если нужен шаг — максимум 2 коротких шага. Ответ на том же языке, что и вопрос.\n\n"
     )
 
-    full_prompt = system_instr + "\nЗадача:\n" + prompt_text
+    full_prompt = system_instr + "Задача:\n" + prompt_text
 
-    call_kwargs = {"model": REPO_ID, "max_new_tokens": 512}
-    if REVISION:
-        call_kwargs["revision"] = REVISION
+    # Простое обрезание по символам — лёгкая защита от очень длинных входов.
+    # (Можно заменить на подсчёт токенов с transformers/tokenizer для точности.)
+    MAX_PROMPT_CHARS = 3500
+    if len(full_prompt) > MAX_PROMPT_CHARS:
+        # оставим конец (в нём обычно вопрос/формулы)
+        full_prompt = full_prompt[-MAX_PROMPT_CHARS:]
+
+    # Подготовка аргументов для text_generation (без 'revision')
+    call_kwargs = {
+        "model": REPO_ID,
+        "max_new_tokens": 128,   # уменьшили с 512 до 128 — экономия токенов
+        "temperature": 0.0,      # детерминированность, меньше "воды"
+    }
 
     try:
-        # text_generation как awaitable в AsyncInferenceClient: первый аргумент — prompt
         result = await hf_client.text_generation(full_prompt, **call_kwargs)
     except Exception as e:
+        # логирование и проброс ошибки наверх
         logging.exception("Ошибка при обращении к HuggingFace Inference: %s", e)
         raise
 
-    # Различные форматы ответа — приводим к строке
-    # Обычно result может быть str, dict или объект с полем generated_text
+    # Приводим результат к строке (возможные форматы обработки)
     if isinstance(result, str):
         return result.strip()
 
-    # если это список или dict — пробуем достать форму
-    # случаи: [{'generated_text': '...'}] или {'generated_text': '...'}
     if isinstance(result, list) and result:
         first = result[0]
         if isinstance(first, dict) and "generated_text" in first:
@@ -99,12 +105,10 @@ async def ask_model(prompt_text: str) -> str:
     if isinstance(result, dict):
         if "generated_text" in result:
             return result["generated_text"].strip()
-        # иногда key 'text' или 'data' встречается
         for k in ("text", "data"):
             if k in result:
                 return str(result[k]).strip()
 
-    # fallback
     return str(result).strip()
 
 
