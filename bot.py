@@ -11,7 +11,9 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
-MODEL = os.getenv("MODEL", "Qwen/Qwen3-VL-235B-Instruct:novita")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-VL-7B-Instruct")
+MODEL_REV = os.getenv("MODEL_REV", "hyperbolic")
+HF_PROVIDER = os.getenv("HF_PROVIDER", "hyperbolic")
 
 if not BOT_TOKEN:
     raise RuntimeError("Переменная окружения BOT_TOKEN не установлена")
@@ -23,13 +25,16 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
 hf_client = InferenceClient(
-    provider="novita",
+    provider=HF_PROVIDER,
     api_key=HF_TOKEN,
 )
 
+# -------------------- Локальный lock для очереди --------------------
+hf_lock = asyncio.Lock()
+
 # -------------------- Функция запроса к модели --------------------
 async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
-    """Отправка текста и (опционально) изображения в Qwen3-VL через HuggingFace Hub, ответ на русском и кратко."""
+    """Отправка текста и (опционально) изображения через HuggingFace Hub, ответ на русском и кратко."""
     system_message = {
         "role": "system",
         "content": [
@@ -43,32 +48,32 @@ async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
     if image_url:
         user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
-    try:
-        # HF Hub работает синхронно, оборачиваем в поток
-        def sync_call():
-            return hf_client.chat.completions.create(
-                model=MODEL,
-                messages=[system_message, {"role": "user", "content": user_content}],
-                max_tokens=256,
-                temperature=0.2
-            )
+    async with hf_lock:  # один запрос в момент времени
+        try:
+            def sync_call():
+                return hf_client.chat.completions.create(
+                    model=f"{MODEL_NAME}:{MODEL_REV}",
+                    messages=[system_message, {"role": "user", "content": user_content}],
+                    max_tokens=256,
+                    temperature=0.2
+                )
 
-        completion = await asyncio.to_thread(sync_call)
+            completion = await asyncio.to_thread(sync_call)
 
-        # Извлекаем текст
-        text = completion.choices[0].message
-        if isinstance(text, str):
-            return text.strip()
-        elif hasattr(text, "content"):
-            content = text.content
-            if isinstance(content, list):
-                return " ".join(c["text"] for c in content if c["type"] == "text").strip()
-            return str(content)
-        return str(text)
+            # Извлекаем текст
+            text = completion.choices[0].message
+            if isinstance(text, str):
+                return text.strip()
+            elif hasattr(text, "content"):
+                content = text.content
+                if isinstance(content, list):
+                    return " ".join(c["text"] for c in content if c["type"] == "text").strip()
+                return str(content)
+            return str(text)
 
-    except Exception as e:
-        logging.exception("Ошибка при запросе к модели: %s", e)
-        return f"Ошибка при запросе к модели: {e}"
+        except Exception as e:
+            logging.exception("Ошибка при запросе к модели: %s", e)
+            return f"Ошибка при запросе к модели: {e}"
 
 # -------------------- Хэндлеры Telegram --------------------
 @dp.message_handler(content_types=types.ContentType.TEXT)
