@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, executor, types
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 import asyncio
-import matplotlib.pyplot as plt
+from latex2png import latex2png
 
 # -------------------- Настройки --------------------
 logging.basicConfig(level=logging.INFO)
@@ -27,13 +27,15 @@ hf_client = InferenceClient(provider=HF_PROVIDER, api_key=HF_TOKEN)
 # -------------------- Lock для очереди --------------------
 hf_lock = asyncio.Lock()
 
-# -------------------- Функция конвертации LaTeX в картинку --------------------
+# -------------------- Функция для конвертации LaTeX в PNG --------------------
 def latex_to_image(latex_code, filename="formula.png"):
-    fig, ax = plt.subplots()
-    ax.text(0.5, 0.5, f"${latex_code}$", fontsize=20, ha='center', va='center')
-    ax.axis('off')
-    plt.savefig(filename, bbox_inches='tight', transparent=True)
-    plt.close()
+    latex2png(
+        latex_code,
+        filename,
+        dpi=200,
+        fontsize=20,
+        transparent=True
+    )
     return filename
 
 # -------------------- Функция запроса к модели --------------------
@@ -55,7 +57,7 @@ async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
         try:
             def sync_call():
                 return hf_client.chat.completions.create(
-                    model=MODEL_NAME,
+                    model=f"{MODEL_NAME}@{MODEL_REV}",
                     messages=[system_message, {"role": "user", "content": user_content}],
                     max_tokens=256,
                     temperature=0.2
@@ -66,7 +68,6 @@ async def ask_model(prompt_text: str = "", image_url: str = None) -> str:
             if hasattr(text, "content"):
                 content = text.content
                 if isinstance(content, list):
-                    # Склеиваем текстовые части
                     text_str = " ".join(c["text"] for c in content if c["type"] == "text").strip()
                 else:
                     text_str = str(content)
@@ -85,8 +86,8 @@ async def handle_text(message: types.Message):
     await message.reply("Обрабатываю...")
     answer = await ask_model(message.text)
 
-    # Проверяем, есть ли LaTeX (пример простая проверка на \( ... \) или $ ... $)
-    if "\\" in answer or "$" in answer:
+    # Если есть LaTeX (пример: проверка на символы ^, \ или $)
+    if "\\" in answer or "^" in answer or "$" in answer:
         filename = latex_to_image(answer)
         await bot.send_photo(chat_id=message.chat.id, photo=open(filename, "rb"))
     else:
@@ -103,7 +104,7 @@ async def handle_photo(message: types.Message):
     caption = message.caption or "Опиши изображение."
     answer = await ask_model(caption, image_url=file_url)
 
-    if "\\" in answer or "$" in answer:
+    if "\\" in answer or "^" in answer or "$" in answer:
         filename = latex_to_image(answer)
         await bot.send_photo(chat_id=message.chat.id, photo=open(filename, "rb"))
     else:
